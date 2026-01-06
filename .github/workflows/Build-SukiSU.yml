@@ -16,6 +16,7 @@ on:
           - sm8650
           - sm8750
           - sm8850
+          - sm8845
       FEIL:
         type: choice
         description: "配置文件"
@@ -46,6 +47,7 @@ on:
           - oneplus_pad_2_pro
           - oneplus_pad_3
           - oneplus_15
+          - oneplus_ace_6t
           - GitHub有bug可能不显示最后一项,误使用此项
       CPUD:
         type: choice
