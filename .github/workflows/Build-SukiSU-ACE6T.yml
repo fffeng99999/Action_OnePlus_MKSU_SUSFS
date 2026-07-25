@@ -54,16 +54,21 @@ jobs:
           if [  -e kernel_platform/msm-kernel/BUILD.bazel ]; then
           sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/msm-kernel/BUILD.bazel
           fi
+          if [  -e kernel_platform/soc-repo/BUILD.bazel ]; then
+          sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/soc-repo/BUILD.bazel
+          fi
           rm kernel_platform/common/android/abi_gki_protected_exports_* || echo "No protected exports!"
           rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
+          rm kernel_platform/soc-repo/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
       # 删除 -dirty 后缀
       - name: Force remove -dirty suffix
         run: |
           cd kernel_workspace/kernel_platform
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
           sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
+          # sm8845 manifest 把 SoC 内核放在 soc-repo，而非 msm-kernel
+          find . -maxdepth 3 -name setlocalversion ! -path "./common/*" ! -path "./external/*" -exec sed -i 's/ -dirty//g' {} \;
           sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
           git add -A
           git commit -m "Force remove -dirty suffix from kernel version"
@@ -159,6 +164,13 @@ jobs:
             echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config"
           fi
 
+          # sm8845 manifest 使用 soc-repo 作为 SoC 内核路径
+          if [  -e ./soc-repo/modules.bzl ]; then
+            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./soc-repo/modules.bzl"
+            echo "CONFIG_ZSMALLOC=y" >> "soc-repo/arch/arm64/configs/canoe-GKI.config"
+            echo "CONFIG_ZRAM=y" >> "soc-repo/arch/arm64/configs/canoe-GKI.config"
+          fi
+
           echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
 
           if grep -q "CONFIG_ZSMALLOC=y" "$CONFIG_FILE" && grep -q "CONFIG_ZRAM=y" "$CONFIG_FILE"; then
@@ -185,6 +197,9 @@ jobs:
           dir3="kernel_workspace/kernel_platform/out/msm-canoe-canoe-gki/dist/"
           dir4="kernel_workspace/kernel_platform/out/msm-kernel-canoe-gki/gki_kernel/common/arch/arm64/boot/"
           dir5="kernel_workspace/kernel_platform/out/msm-canoe-canoe-gki/gki_kernel/common/arch/arm64/boot/"
+          # sm8845 manifest 使用 soc-repo，构建输出可能用 soc-repo 命名
+          dir6="kernel_workspace/kernel_platform/out/soc-repo-canoe-gki/dist/"
+          dir7="kernel_workspace/kernel_platform/out/soc-repo-canoe-gki/gki_kernel/common/arch/arm64/boot/"
           target1="./AnyKernel3/"
           target2="./kernel_workspace/kernel"
 
@@ -199,8 +214,12 @@ jobs:
             image_path="$dir4"Image
           elif find "$dir5" -name "Image" | grep -q "Image"; then
             image_path="$dir5"Image
+          elif find "$dir6" -name "Image" | grep -q "Image"; then
+            image_path="$dir6"Image
+          elif find "$dir7" -name "Image" | grep -q "Image"; then
+            image_path="$dir7"Image
           else
-            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+            image_path=$(find "./kernel_workspace/kernel_platform/" -name "Image" | head -n 1)
           fi
 
           # 拷贝 Image
@@ -218,14 +237,22 @@ jobs:
           fi
 
           # sm8845 同代衍生 SoC，拷贝额外镜像
+          # 在所有候选目录中查找额外镜像文件
           for file in dtbo.img system_dlkm.erofs.img vendor_dlkm.img vendor_boot.img; do
-            if [ -f "$dir1$file" ]; then
-              target_name="$file"
-              # 特殊处理 system_dlkm.erofs.img 的目标名
-              if [ "$file" = "system_dlkm.erofs.img" ]; then
-                target_name="system_dlkm.img"
+            target_name="$file"
+            # 特殊处理 system_dlkm.erofs.img 的目标名
+            if [ "$file" = "system_dlkm.erofs.img" ]; then
+              target_name="system_dlkm.img"
+            fi
+            found_file=""
+            for d in "$dir1" "$dir3" "$dir6" "$dir7"; do
+              if [ -f "$d$file" ]; then
+                found_file="$d$file"
+                break
               fi
-              cp "$dir1$file" "./AnyKernel3/$target_name"
+            done
+            if [ -n "$found_file" ]; then
+              cp "$found_file" "./AnyKernel3/$target_name"
             else
               echo "$file 不存在，跳过复制"
             fi
@@ -233,7 +260,12 @@ jobs:
 
       - name: Apply patch_linux and replace Image
         run: |
-          cd /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-canoe-gki/dist
+          DIST_DIR="/home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-canoe-gki/dist"
+          # sm8845 manifest 使用 soc-repo，构建输出目录可能不同
+          if [ ! -d "$DIST_DIR" ]; then
+            DIST_DIR=$(find /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out -type d -name "dist" | head -n 1)
+          fi
+          cd "$DIST_DIR"
 
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
           chmod +x patch_linux
