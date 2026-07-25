@@ -38,6 +38,15 @@ jobs:
         run: |
           mkdir kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b refs/heads/oneplus/sm8845 -m oneplus_ace_6t.xml --depth=1
+          # 移除 CodeLinaro 上分支已失效的非必要仓库（asuite/tradefed 仅用于 IDE 和测试，内核编译不需要）
+          mkdir -p .repo/local_manifests
+          cat > .repo/local_manifests/remove_unused.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <manifest>
+            <remove-project name="kernel_platform/prebuilts/asuite" />
+            <remove-project name="kernel_platform/tools/tradefederation/prebuilts" />
+          </manifest>
+          EOF
           repo sync
           if [  -e kernel_platform/common/BUILD.bazel ]; then
           sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' kernel_platform/common/BUILD.bazel
