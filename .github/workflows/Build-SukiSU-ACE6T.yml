@@ -117,10 +117,15 @@ jobs:
       - name: Apply LZ4KD
         run: |
           cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/other/zram/zram_patch/6.12/lz4kd.patch ./
-          echo "正在打lz4kd补丁"
-          patch -p1 -F 3 < lz4kd.patch || true
-          echo '完成LZ4KD补丁'
+          # SukiSU_patch 仓库当前没有 6.12 版本的 lz4kd 补丁，跳过此步骤
+          if [ -f ../../SukiSU_patch/other/zram/zram_patch/6.12/lz4kd.patch ]; then
+            cp ../../SukiSU_patch/other/zram/zram_patch/6.12/lz4kd.patch ./
+            echo "正在打lz4kd补丁"
+            patch -p1 -F 3 < lz4kd.patch || true
+            echo '完成LZ4KD补丁'
+          else
+            echo "未找到 6.12 版本的 lz4kd.patch，跳过 LZ4KD 补丁（ZRAM 将使用默认算法）"
+          fi
 
       # 配置信息
       - name: Add Configuration Settings
