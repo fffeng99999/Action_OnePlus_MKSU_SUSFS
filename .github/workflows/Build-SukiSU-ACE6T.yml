@@ -90,7 +90,7 @@ jobs:
         run: |
           cd kernel_workspace
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android16-6.12
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          git clone https://github.com/fffeng99999/SukiSU_patch.git
           cd kernel_platform
           echo "正在给内核打susfs补丁"
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android16-6.12.patch ./common/
@@ -269,7 +269,7 @@ jobs:
           fi
           cd "$DIST_DIR"
 
-          curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
+          curl -LSs "https://raw.githubusercontent.com/fffeng99999/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
           chmod +x patch_linux
           ./patch_linux
           rm -f Image
