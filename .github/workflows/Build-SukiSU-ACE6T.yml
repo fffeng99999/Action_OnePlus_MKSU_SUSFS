@@ -66,7 +66,9 @@ jobs:
         run: |
           cd kernel_workspace/kernel_platform
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
+          # 兼容 external/dtc 和 external/qcom-dtc 两种路径
+          [ -f external/dtc/scripts/setlocalversion ] && sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
+          [ -f external/qcom-dtc/scripts/setlocalversion ] && sed -i 's/ -dirty//g' external/qcom-dtc/scripts/setlocalversion
           # sm8845 manifest 把 SoC 内核放在 soc-repo，而非 msm-kernel
           find . -maxdepth 3 -name setlocalversion ! -path "./common/*" ! -path "./external/*" -exec sed -i 's/ -dirty//g' {} \;
           sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
