@@ -155,7 +155,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
 
           # Remove check_defconfig
-          sed -i 's/check_defconfig//' ./common/build.config.gki
+          [ -f ./common/build.config.gki ] && sed -i 's/check_defconfig//' ./common/build.config.gki || echo "build.config.gki 不存在，跳过 check_defconfig 移除"
 
           # LZ4KD配置 (KERNEL_VERSION=6.12, ANDROID_VERSION=android16)
           echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
