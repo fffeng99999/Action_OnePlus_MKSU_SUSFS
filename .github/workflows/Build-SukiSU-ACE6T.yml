@@ -193,6 +193,19 @@ jobs:
         run: |
           cd kernel_workspace
           LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh canoe gki
+          # 验证构建产物是否存在（oplus_build_kernel.sh 可能不返回非零退出码）
+          echo "=== 验证构建产物 ==="
+          if ! find kernel_platform/out -name "Image" -type f | grep -q "Image"; then
+            echo "错误：构建产物中未找到 Image 文件"
+            echo "=== out/ 目录结构 ==="
+            find kernel_platform/out -maxdepth 4 -type d | head -50
+            echo "=== 查找所有 Image 和 .img 文件 ==="
+            find kernel_platform/out -type f \( -name "Image" -o -name "*.img" \) 2>&1 | head -30
+            echo "=== 查找可能的错误日志 ==="
+            find kernel_platform/out -name "*.log" -type f 2>&1 | head -10
+            exit 1
+          fi
+          echo "构建产物验证通过"
 
       - name: Make AnyKernel3
         run: |
