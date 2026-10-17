@@ -1,0 +1,54 @@
+name: Upstream Watch
+
+# 每周巡检上游：分支是否还在、Kconfig 符号是否变了、补丁是否还能对上 KSU 源码、
+# KPM 工具哈希是否被替换。任一 FAIL 即红灯（GitHub 会邮件通知）。
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # 每周一 03:00 UTC = 11:00 CST
+  workflow_dispatch:
+    inputs:
+      ANDROID:
+        description: "安卓版本（如 android16）"
+        required: false
+        default: ""
+      KERNEL:
+        description: "内核版本（如 6.12）"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 运行上游一致性校验
+        id: pre
+        continue-on-error: true
+        run: |
+          set -a; . ./config/upstream.env; set +a
+          ARGS=""
+          [ -n "${{ github.event.inputs.ANDROID }}" ] && ARGS="$ARGS --android ${{ github.event.inputs.ANDROID }}"
+          [ -n "${{ github.event.inputs.KERNEL }}" ] && ARGS="$ARGS --kernel ${{ github.event.inputs.KERNEL }}"
+          bash scripts/upstream-preflight.sh $ARGS 2>&1 | tee report.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: 写入任务摘要
+        if: always()
+        run: |
+          {
+            echo "## 上游一致性巡检"
+            echo ""
+            echo '```'
+            cat report.txt 2>/dev/null || echo "无输出"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 校验失败则中断
+        if: steps.pre.outcome == 'failure'
+        run: |
+          echo "::error::上游依赖已变化，构建可能产出缺少 root/SUSFS 的内核。请按 README「上游一致性」处理。"
+          exit 1
