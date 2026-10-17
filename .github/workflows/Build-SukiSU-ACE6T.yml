@@ -208,7 +208,9 @@ jobs:
       - name: Build kernel
         run: |
           cd kernel_workspace
-          LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh canoe gki
+          # 不要设置 LTO：build_with_bazel.py 现在会直接报 ERROR: --lto is not supported now
+          unset LTO
+          SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh canoe gki
           # 验证构建产物是否存在（oplus_build_kernel.sh 可能不返回非零退出码）
           echo "=== 验证构建产物 ==="
           if ! find kernel_platform/out -name "Image" -type f | grep -q "Image"; then
