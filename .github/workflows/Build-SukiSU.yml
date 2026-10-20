@@ -258,11 +258,12 @@ jobs:
           echo "完成（SUSFS 钩子校验通过）"
 
       - name: Apply Hide Stuff Patches
+        if: ${{ github.event.inputs.KERNEL_VERSION != '6.12' }}
         run: |
           cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
           echo "正在打隐藏应用补丁"
-          patch -p1 -F 3 < 69_hide_stuff.patch
+          patch -p1 -F 3 < 69_hide_stuff.patch || true
 
       - name: Apply LZ4KD
         run: |
