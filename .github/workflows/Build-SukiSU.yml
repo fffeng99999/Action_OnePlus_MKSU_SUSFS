@@ -251,7 +251,9 @@ jobs:
           fi
 
           cd ./common
+          grep -q "linux/dma-buf.h" fs/exec.c || sed -i '/#include <linux\/ksm.h>/a #include <linux/dma-buf.h>' fs/exec.c 2>/dev/null || true
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+          grep -q "linux/susfs_def.h" fs/exec.c || sed -i '/#include <linux\/ksm.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' fs/exec.c 2>/dev/null || true
           # 断言 SUSFS 真正落地：patch 允许个别 hunk 失败，但核心钩子必须在，否则等于没打
           test -f include/linux/susfs.h || { echo "::error::SUSFS 补丁未生效：include/linux/susfs.h 缺失"; exit 1; }
           grep -q "susfs_is_inode_sus_path" fs/namei.c || { echo "::error::SUSFS 未挂到 fs/namei.c，隐藏功能不会生效"; exit 1; }

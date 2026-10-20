@@ -140,7 +140,11 @@ jobs:
           cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
 
           cd ./common
+          # 修复 OnePlus 6.12 的 fs/exec.c 缺少 linux/dma-buf.h 导致 susfs 补丁 hunk 1 匹配失败的问题
+          grep -q "linux/dma-buf.h" fs/exec.c || sed -i '/#include <linux\/ksm.h>/a #include <linux/dma-buf.h>' fs/exec.c
           patch -p1 < 50_add_susfs_in_gki-android16-6.12.patch || true
+          # 额外兜底：确保 fs/exec.c 必定包含 linux/susfs_def.h，避免 susfs_is_current_proc_no_su 未声明报错
+          grep -q "linux/susfs_def.h" fs/exec.c || sed -i '/#include <linux\/ksm.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif' fs/exec.c
           # 断言 SUSFS 真正落地：patch 允许个别 hunk 失败，但核心钩子必须在，否则等于没打
           test -f include/linux/susfs.h || { echo "::error::SUSFS 补丁未生效：include/linux/susfs.h 缺失"; exit 1; }
           grep -q "susfs_is_inode_sus_path" fs/namei.c || { echo "::error::SUSFS 未挂到 fs/namei.c，隐藏功能不会生效"; exit 1; }
