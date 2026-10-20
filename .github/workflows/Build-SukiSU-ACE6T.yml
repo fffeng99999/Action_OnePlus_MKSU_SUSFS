@@ -65,6 +65,13 @@ jobs:
           rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_* || echo "No protected exports!"
           rm kernel_platform/soc-repo/android/abi_gki_protected_exports_* || echo "No protected exports!"
 
+          # 禁用 Bazel/Kleaf 对 defconfig 与 savedefconfig 一致性的强制检查（否则追加 defconfig 必报 mismatch 错误）
+          sed -i 's/return ${RES}/return 0/' kernel_platform/build/kernel/_setup_env.sh || true
+          [ -f kernel_platform/build/kernel/kleaf/common_kernels.bzl ] && sed -i 's/check_defconfig = None/check_defconfig = "disabled"/' kernel_platform/build/kernel/kleaf/common_kernels.bzl || true
+          if [ -e kernel_platform/common/BUILD.bazel ]; then
+            sed -i '/common_kernel(/a\    check_defconfig = "disabled",' kernel_platform/common/BUILD.bazel
+          fi
+
       # 删除 -dirty 后缀
       - name: Force remove -dirty suffix
         run: |
@@ -104,10 +111,24 @@ jobs:
           echo "KSU_VERSION=$KSU_VERSION"
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
 
+          # 关键修复：Bazel 沙箱隔离机制无法访问 common 目录外部的软链接
+          # setup.sh 生成的 common/drivers/kernelsu -> ../../KernelSU/kernel 是跨目录软链接
+          # 在 Bazel 沙箱中会变成死链接，导致 Kconfig 读不到符号、KernelSU 源码无法被编译进内核
+          # 将软链接替换为真实目录副本，确保完整纳入 //common:common_kernel_sources
+          cd "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform"
+          rm -rf common/drivers/kernelsu
+          cp -r KernelSU/kernel common/drivers/kernelsu
+          # 将计算好的 KSU_VERSION 固化进 Makefile，避免沙箱内缺少 .git/网络 导致版本回退为 13000
+          sed -i "s/KSU_VERSION[[:space:]]*:=.*/KSU_VERSION := $KSU_VERSION/" common/drivers/kernelsu/Makefile
+
       - name: Apply Patches SukiSU Ultra
         run: |
+          set -a; . "$GITHUB_WORKSPACE/config/upstream.env"; set +a
+          EFFECTIVE_SUSFS_REF="${SUSFS_PIN:-$SUSFS_REF}"
+          echo "使用 SUSFS_REF=$EFFECTIVE_SUSFS_REF"
           cd kernel_workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android16-6.12
+          git clone "$SUSFS_REPO" susfs4ksu
+          (cd susfs4ksu && git checkout "$EFFECTIVE_SUSFS_REF")
           git clone https://github.com/fffeng99999/SukiSU_patch.git
           cd kernel_platform
           echo "正在给内核打susfs补丁"
@@ -172,6 +193,9 @@ jobs:
 
           # Remove check_defconfig
           [ -f ./common/build.config.gki ] && sed -i 's/check_defconfig//' ./common/build.config.gki || echo "build.config.gki 不存在，跳过 check_defconfig 移除"
+          sed -i 's/return ${RES}/return 0/' ./build/kernel/_setup_env.sh || true
+          [ -f ./build/kernel/kleaf/common_kernels.bzl ] && sed -i 's/check_defconfig = None/check_defconfig = "disabled"/' ./build/kernel/kleaf/common_kernels.bzl || true
+          [ -f ./common/BUILD.bazel ] && sed -i '/common_kernel(/a\    check_defconfig = "disabled",' ./common/BUILD.bazel || true
 
           # LZ4KD配置 (KERNEL_VERSION=6.12, ANDROID_VERSION=android16)
           echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
@@ -183,25 +207,21 @@ jobs:
 
           if [  -e ./msm-kernel/modules.bzl ]; then
             sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./msm-kernel/modules.bzl"
-            echo "CONFIG_ZSMALLOC=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config"
-            echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config"
+            echo "CONFIG_ZSMALLOC=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config" 2>/dev/null || true
+            echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config" 2>/dev/null || true
           fi
 
           # sm8845 manifest 使用 soc-repo 作为 SoC 内核路径
           if [  -e ./soc-repo/modules.bzl ]; then
             sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./soc-repo/modules.bzl"
-            echo "CONFIG_ZSMALLOC=y" >> "soc-repo/arch/arm64/configs/canoe-GKI.config"
-            echo "CONFIG_ZRAM=y" >> "soc-repo/arch/arm64/configs/canoe-GKI.config"
           fi
 
           echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
 
           if grep -q "CONFIG_ZSMALLOC=y" "$CONFIG_FILE" && grep -q "CONFIG_ZRAM=y" "$CONFIG_FILE"; then
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4K=y" >> "$CONFIG_FILE"
-            echo "CONFIG_CRYPTO_LZ4KD=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
-            echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
+            grep -q "CONFIG_ZRAM_WRITEBACK" "$CONFIG_FILE" || echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
           fi
 
       # sm8845 走 oplus_build_kernel.sh 编译路径
@@ -244,6 +264,7 @@ jobs:
           echo "=== 搜索所有 Image 文件 ==="
           find kernel_workspace -name "Image" -type f 2>&1 | head -20
 
+          dir0="kernel_workspace/kernel_platform/out/msm-kernel-canoe-perf/dist/"
           dir1="kernel_workspace/kernel_platform/out/msm-kernel-canoe-gki/dist/"
           dir2="kernel_workspace/kernel_platform/bazel-out/k8-fastbuild/bin/msm-kernel/canoe_gki_kbuild_mixed_tree/"
           dir3="kernel_workspace/kernel_platform/out/msm-canoe-canoe-gki/dist/"
@@ -252,12 +273,13 @@ jobs:
           # sm8845 manifest 使用 soc-repo，构建输出可能用 soc-repo 命名
           dir6="kernel_workspace/kernel_platform/out/soc-repo-canoe-gki/dist/"
           dir7="kernel_workspace/kernel_platform/out/soc-repo-canoe-gki/gki_kernel/common/arch/arm64/boot/"
+          dir8="kernel_workspace/kernel_platform/out/soc-repo-canoe-perf/dist/"
           target1="./AnyKernel3/"
           target2="./kernel_workspace/kernel"
 
           # 查找 Image 文件（先在候选目录中找，再用更宽的兜底搜索）
           image_path=""
-          for d in "$dir1" "$dir2" "$dir3" "$dir4" "$dir5" "$dir6" "$dir7"; do
+          for d in "$dir0" "$dir1" "$dir2" "$dir3" "$dir4" "$dir5" "$dir6" "$dir7" "$dir8"; do
             if [ -d "$d" ] && find "$d" -name "Image" -type f | grep -q "Image"; then
               image_path=$(find "$d" -name "Image" -type f | head -n 1)
               echo "在 $d 找到 Image: $image_path"
@@ -277,9 +299,9 @@ jobs:
           # 拷贝 Image
           if [ -n "$image_path" ] && [ -f "$image_path" ]; then
             mkdir -p "$dir1"
-            cp "$image_path" "$dir1"
-            cp "$dir1"Image ./AnyKernel3/Image
-            echo "已拷贝 Image 到 AnyKernel3/"
+            cp -f "$image_path" "$dir1"Image 2>/dev/null || true
+            cp -f "$image_path" ./AnyKernel3/Image
+            echo "已拷贝 Image 到 AnyKernel3/ (来自 $image_path)"
           else
             echo "未找到 Image 文件，构建可能失败"
             echo "=== 最后诊断：列出 out/ 下所有 .img 和 Image 文件 ==="
@@ -297,7 +319,7 @@ jobs:
             fi
             found_file=""
             # 在 Image 所在目录及其上级 dist 目录中查找
-            search_dirs=("$dir1" "$dir3" "$dir6" "$dir7" "$(dirname "$image_path")")
+            search_dirs=("$dir0" "$dir1" "$dir3" "$dir6" "$dir7" "$dir8" "$(dirname "$image_path")")
             for d in "${search_dirs[@]}"; do
               if [ -f "$d$file" ]; then
                 found_file="$d$file"
@@ -319,14 +341,17 @@ jobs:
       - name: Apply patch_linux and replace Image
         run: |
           set -a; . "$GITHUB_WORKSPACE/config/upstream.env"; set +a
-          DIST_DIR="/home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-canoe-gki/dist"
+          DIST_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out/msm-kernel-canoe-perf/dist"
+          if [ ! -d "$DIST_DIR" ]; then
+            DIST_DIR="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out/msm-kernel-canoe-gki/dist"
+          fi
           # sm8845 manifest 使用 soc-repo，构建输出目录可能不同
           if [ ! -d "$DIST_DIR" ]; then
-            DIST_DIR=$(find /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out -type d -name "dist" | head -n 1)
+            DIST_DIR=$(find "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out" -type d -name "dist" | head -n 1)
           fi
           # 如果还没有 dist 目录，用包含 Image 的目录
           if [ -z "$DIST_DIR" ] || [ ! -d "$DIST_DIR" ]; then
-            DIST_DIR=$(find /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace -name "Image" -type f -exec dirname {} \; 2>/dev/null | head -n 1)
+            DIST_DIR=$(find "$GITHUB_WORKSPACE/kernel_workspace" -name "Image" -type f -exec dirname {} \; 2>/dev/null | head -n 1)
           fi
           if [ -z "$DIST_DIR" ] || [ ! -d "$DIST_DIR" ]; then
             echo "无法找到包含 Image 的目录"
@@ -343,24 +368,33 @@ jobs:
           ./patch_linux
           rm -f Image
           mv oImage Image
-          cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
+          cp -f Image "$GITHUB_WORKSPACE/AnyKernel3/Image"
 
       # 下载 SUSFS 模块（CI 构建）
       - name: Download Latest SUSFS Module from CI
         run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
+          LATEST_RUN_ID=$(curl -s "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
             jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
 
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
-            exit 1
+          ARTIFACT_URL=""
+          if [ -n "$LATEST_RUN_ID" ]; then
+            ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url // empty')
           fi
 
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
+          DOWNLOADED=0
+          if [ -n "$ARTIFACT_URL" ] && [ "$ARTIFACT_URL" != "null" ]; then
+            echo "尝试从 CI 构建下载 SUSFS 模块..."
+            if curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"; then
+              DOWNLOADED=1
+            fi
+          fi
 
-          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
+          if [ "$DOWNLOADED" -eq 0 ]; then
+            echo "CI 下载不可用，从 GitHub Release 下载预编译 SUSFS 模块..."
+            curl -LSs -o ksu_module_susfs.zip "https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip"
+          fi
+
           cp ksu_module_susfs.zip ./AnyKernel3/
 
       - name: Upload AnyKernel3

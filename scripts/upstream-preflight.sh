@@ -155,8 +155,9 @@ else
     && warn "SUSFS 分支已前进：pin=${SUSFS_PIN:0:12} 远端=${SUSFS_COMMIT:0:12}"
 fi
 
+EFFECTIVE_SUSFS_REF="${SUSFS_PIN:-$SUSFS_REF}"
 PATCH_NAME="50_add_susfs_in_gki-${ANDROID}-${KERNEL}.patch"
-PATCH_URL="https://gitlab.com/simonpunk/susfs4ksu/-/raw/${SUSFS_REF}/kernel_patches/${PATCH_NAME}"
+PATCH_URL="https://gitlab.com/simonpunk/susfs4ksu/-/raw/${EFFECTIVE_SUSFS_REF}/kernel_patches/${PATCH_NAME}"
 if curl -fsSL "$PATCH_URL" -o "$TMP/susfs.patch" 2>/dev/null; then
   pass "补丁可获取：$PATCH_NAME（$(wc -l < "$TMP/susfs.patch") 行）"
 
