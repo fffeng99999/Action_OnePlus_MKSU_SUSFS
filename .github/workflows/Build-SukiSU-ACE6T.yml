@@ -163,15 +163,25 @@ jobs:
       - name: Apply LZ4KD
         run: |
           cd kernel_workspace/kernel_platform/common
-          # SukiSU_patch 仓库当前没有 6.12 版本的 lz4kd 补丁，跳过此步骤
+          # SukiSU_patch 仓库当前没有 6.12 版本的 lz4kd 补丁（只有 5.10/5.15/6.1/6.6）
+          LZ4KD_APPLIED=0
           if [ -f ../../SukiSU_patch/other/zram/zram_patch/6.12/lz4kd.patch ]; then
             cp ../../SukiSU_patch/other/zram/zram_patch/6.12/lz4kd.patch ./
             echo "正在打lz4kd补丁"
-            patch -p1 -F 3 < lz4kd.patch || true
-            echo '完成LZ4KD补丁'
+            if patch -p1 -F 3 < lz4kd.patch; then
+              LZ4KD_APPLIED=1
+              echo '完成LZ4KD补丁'
+            else
+              echo "lz4kd.patch 应用失败，按未打补丁处理（ZRAM 使用默认算法，保持模块）"
+            fi
           else
-            echo "未找到 6.12 版本的 lz4kd.patch，跳过 LZ4KD 补丁（ZRAM 将使用默认算法）"
+            echo "未找到 6.12 版本的 lz4kd.patch，跳过 LZ4KD 补丁（ZRAM 将使用默认算法，保持 stock 模块）"
           fi
+          # 导出标志供 Add Configuration Settings 使用：
+          # 只有真正打上了 lz4kd 补丁，才把 zram/zsmalloc 转成内建(=y)并改 modules.bzl；
+          # 否则必须保持 =m 模块，因为 soc-repo 会把它们当 DDK 模块(canoe_perf/mm/zsmalloc)编译，
+          # 内建 + DDK 模块会导致 modpost 报 'exported twice'（vmlinux 与模块重复导出符号）。
+          echo "LZ4KD_APPLIED=$LZ4KD_APPLIED" >> "$GITHUB_ENV"
 
       # 配置信息
       - name: Add Configuration Settings
@@ -200,31 +210,47 @@ jobs:
           sed -i 's/return ${RES}/return 0/' ./build/kernel/_setup_env.sh || true
           [ -f ./build/kernel/kleaf/common_kernels.bzl ] && sed -i 's/check_defconfig = None/check_defconfig = "disabled"/' ./build/kernel/kleaf/common_kernels.bzl || true
 
-          # LZ4KD配置 (KERNEL_VERSION=6.12, ANDROID_VERSION=android16)
-          echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
-          sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
-
-          if [  -e ./common/modules.bzl ]; then
-            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./common/modules.bzl"
-          fi
-
-          if [  -e ./msm-kernel/modules.bzl ]; then
-            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./msm-kernel/modules.bzl"
-            echo "CONFIG_ZSMALLOC=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config" 2>/dev/null || true
-            echo "CONFIG_ZRAM=y" >> "msm-kernel/arch/arm64/configs/canoe-GKI.config" 2>/dev/null || true
-          fi
-
-          # sm8845 manifest 使用 soc-repo 作为 SoC 内核路径
-          if [  -e ./soc-repo/modules.bzl ]; then
-            sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "./soc-repo/modules.bzl"
-          fi
-
           echo "CONFIG_MODULE_SIG_FORCE=n" >> "$CONFIG_FILE"
 
-          if grep -q "CONFIG_ZSMALLOC=y" "$CONFIG_FILE" && grep -q "CONFIG_ZRAM=y" "$CONFIG_FILE"; then
+          # LZ4KD / ZRAM 内建配置
+          # 仅当 Apply LZ4KD 步骤真正打上了 6.12 的 lz4kd.patch 时，才把 zram/zsmalloc 转内建。
+          # 原因：sm8845(canoe) 的 soc-repo 把 zram、zsmalloc 作为 DDK 模块编译
+          #   (//soc-repo:canoe_perf/mm/zsmalloc、//soc-repo:canoe_perf/drivers/block/zram/zram)。
+          # 若同时把它们写进 gki_defconfig 变成 =y，vmlinux 与 DDK 模块会重复导出
+          # zs_malloc / zs_free / zs_map_object 等符号，modpost 直接报
+          #   "ERROR: modpost: ../soc-repo/zsmalloc: 'zs_malloc' exported twice. Previous export was in vmlinux"
+          # 并使整个构建失败（上一轮 CI 就死在这里）。
+          # SukiSU_patch 目前只有 5.10/5.15/6.1/6.6 的 lz4kd.patch，没有 6.12 版本，
+          # 因此 6.12 走 else 分支：完全保持一加原厂 zram/zsmalloc 模块形态，功能不受影响。
+          if [ "${LZ4KD_APPLIED:-0}" = "1" ]; then
+            echo "LZ4KD 补丁已应用，启用 ZRAM/ZSMALLOC 内建配置"
+            echo "CONFIG_ZSMALLOC=y" >> "$CONFIG_FILE"
+            sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
+
+            for mbzl in ./common/modules.bzl ./msm-kernel/modules.bzl ./soc-repo/modules.bzl; do
+              [ -e "$mbzl" ] && sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$mbzl"
+            done
+
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
             echo "CONFIG_CRYPTO_842=y" >> "$CONFIG_FILE"
             grep -q "CONFIG_ZRAM_WRITEBACK" "$CONFIG_FILE" || echo "CONFIG_ZRAM_WRITEBACK=y" >> "$CONFIG_FILE"
+
+            # 断言：既已内建，DDK 侧就绝不能再出现 zsmalloc/zram 模块目标
+            for mbzl in ./common/modules.bzl ./msm-kernel/modules.bzl ./soc-repo/modules.bzl; do
+              if [ -e "$mbzl" ] && grep -qE '"(drivers/block/zram/zram|mm/zsmalloc)\.ko"' "$mbzl"; then
+                echo "::error::$mbzl 仍列出 zram/zsmalloc 模块，会与内建版本重复导出符号"
+                exit 1
+              fi
+            done
+          else
+            echo "LZ4KD 未应用（6.12 无补丁），保持 zram/zsmalloc 为原厂模块形态(=m)，避免 exported twice"
+            # 自愈：stock gki_defconfig 正常就是 CONFIG_ZRAM=m；但万一被上游改成 =y，
+            # 强制转回 =m，否则 soc-repo 的 DDK 模块会与 vmlinux 重复导出符号导致 modpost 失败。
+            sed -i 's/^CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/; s/^CONFIG_ZRAM=y/CONFIG_ZRAM=m/' "$CONFIG_FILE"
+            # 同样处理 canoe 的 GKI 配置片段（如果存在）
+            for frag in msm-kernel/arch/arm64/configs/canoe-GKI.config soc-repo/arch/arm64/configs/canoe-GKI.config; do
+              [ -e "$frag" ] && sed -i 's/^CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/; s/^CONFIG_ZRAM=y/CONFIG_ZRAM=m/' "$frag"
+            done
           fi
 
       # sm8845 走 oplus_build_kernel.sh 编译路径
