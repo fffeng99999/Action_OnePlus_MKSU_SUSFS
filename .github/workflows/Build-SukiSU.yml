@@ -185,9 +185,6 @@ jobs:
           # 禁用 Bazel/Kleaf 对 defconfig 与 savedefconfig 一致性的强制检查
           sed -i 's/return ${RES}/return 0/' kernel_platform/build/kernel/_setup_env.sh 2>/dev/null || true
           [ -f kernel_platform/build/kernel/kleaf/common_kernels.bzl ] && sed -i 's/check_defconfig = None/check_defconfig = "disabled"/' kernel_platform/build/kernel/kleaf/common_kernels.bzl || true
-          if [ -e kernel_platform/common/BUILD.bazel ]; then
-            sed -i '/common_kernel(/a\    check_defconfig = "disabled",' kernel_platform/common/BUILD.bazel
-          fi
 
       # 删除 -dirty 后缀
       - name: Force remove -dirty suffix
@@ -304,7 +301,6 @@ jobs:
           [ -f ./common/build.config.gki ] && sed -i 's/check_defconfig//' ./common/build.config.gki || true
           sed -i 's/return ${RES}/return 0/' ./build/kernel/_setup_env.sh 2>/dev/null || true
           [ -f ./build/kernel/kleaf/common_kernels.bzl ] && sed -i 's/check_defconfig = None/check_defconfig = "disabled"/' ./build/kernel/kleaf/common_kernels.bzl || true
-          [ -f ./common/BUILD.bazel ] && sed -i '/common_kernel(/a\    check_defconfig = "disabled",' ./common/BUILD.bazel || true
 
           # LZ4KD配置
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
