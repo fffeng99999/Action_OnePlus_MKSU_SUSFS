@@ -118,6 +118,12 @@ jobs:
           # 将计算好的 KSU_VERSION 固化进 Makefile，避免沙箱内缺少 .git/网络 导致版本回退为 13000
           sed -i "s/KSU_VERSION[[:space:]]*:=.*/KSU_VERSION := $KSU_VERSION/" common/drivers/kernelsu/Makefile
 
+          # 适配 Linux 6.8+ security_add_hooks 签名 (const struct lsm_id *)
+          sed -i 's/security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");/#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)\n    static const struct lsm_id ksu_lsmid = { .name = "ksu" };\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), \&ksu_lsmid);\n#else\n    security_add_hooks(ksu_hooks, ARRAY_SIZE(ksu_hooks), "ksu");\n#endif/' common/drivers/kernelsu/hook/lsm_hook.c
+
+          # 适配 Linux 6.11+ netlink_kernel_cfg 移除 cb_mutex 成员
+          sed -i 's/DEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)/#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)\nDEFINE_MEMBER(netlink_kernel_cfg, cb_mutex)\n#endif/' common/drivers/kernelsu/extension/kpm/super_access.c
+
       - name: Apply Patches SukiSU Ultra
         run: |
           set -a; . "$GITHUB_WORKSPACE/config/upstream.env"; set +a
