@@ -228,7 +228,7 @@ jobs:
             sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "$CONFIG_FILE"
 
             for mbzl in ./common/modules.bzl ./msm-kernel/modules.bzl ./soc-repo/modules.bzl; do
-              [ -e "$mbzl" ] && sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$mbzl"
+              [ -e "$mbzl" ] && sed -i 's/"drivers\/block\/zram\/zram\.ko",//g; s/"mm\/zsmalloc\.ko",//g' "$mbzl" || true
             done
 
             echo "CONFIG_CRYPTO_LZ4HC=y" >> "$CONFIG_FILE"
@@ -249,9 +249,16 @@ jobs:
             sed -i 's/^CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/; s/^CONFIG_ZRAM=y/CONFIG_ZRAM=m/' "$CONFIG_FILE"
             # 同样处理 canoe 的 GKI 配置片段（如果存在）
             for frag in msm-kernel/arch/arm64/configs/canoe-GKI.config soc-repo/arch/arm64/configs/canoe-GKI.config; do
-              [ -e "$frag" ] && sed -i 's/^CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/; s/^CONFIG_ZRAM=y/CONFIG_ZRAM=m/' "$frag"
+              [ -e "$frag" ] && sed -i 's/^CONFIG_ZSMALLOC=y/CONFIG_ZSMALLOC=m/; s/^CONFIG_ZRAM=y/CONFIG_ZRAM=m/' "$frag" || true
             done
           fi
+
+          # 收尾：if/else 分支的最后一条语句（尤其 `[ -e ] && sed` 短路）可能返回非零，
+          # 在 `bash -e` 下会让本步骤以 exit 1 失败（上一轮 run 39464854834 正是死在这里）。
+          # 显式以成功收尾，并回显最终 zram/zsmalloc 形态便于排查。
+          echo "=== 最终 ZRAM/ZSMALLOC 配置 ==="
+          grep -E '^CONFIG_(ZRAM|ZSMALLOC)(=| )' "$CONFIG_FILE" || echo "(gki_defconfig 无显式 ZRAM/ZSMALLOC 行，沿用 stock)"
+          echo "Add Configuration Settings 完成"
 
       # sm8845 走 oplus_build_kernel.sh 编译路径
       - name: Build kernel
